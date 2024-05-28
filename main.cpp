@@ -2,18 +2,17 @@
 #include <vector>
 #include <map>
 #include <unordered_set>
+#include <unordered_map>
 
 struct Node {
     Node* parent;
     std::vector<Node*>* children;
-    int child_num;
     uint16_t Xs;
     uint16_t Os;
+    int value;
 };
 
-int nodes = 0;
-
-std::unordered_set<uint16_t>* pSeen;
+std::unordered_map<uint32_t, Node*>* pSeen;
 
 uint16_t moves[] = {
     2,
@@ -33,7 +32,7 @@ uint16_t moves[] = {
     32768
 };
 
-bool is_over(uint16_t state) {
+int get_winner(Node* parent) {
     uint16_t checks[] = {
         // rows
         0xF000,
@@ -52,45 +51,78 @@ bool is_over(uint16_t state) {
         0x1248
     };
     for (uint16_t check : checks) {
-        if ((check & state) == check) {
-            return true;
+        if ((check & parent->Xs) == check) {
+            return 1;
         }
     }
-    return false;
+    for (uint16_t check : checks) {
+        if ((check & parent->Os) == check) {
+            return 1;
+        }
+    }
+    if (parent->Xs | parent->Os == 0b1111111111111111) {
+        return -1;
+    }
+    return 0;
+}
+uint32_t calculate_hash(uint16_t Xs, uint16_t Os) {
+    return ((uint32_t)Xs << 16 | (uint32_t)Os);
 }
 Node* make_move(Node* parent, uint16_t move, bool X) {
+    if ((parent->Xs | move) == parent->Xs || (parent->Os | move) == parent->Os)
+        return nullptr;
 
     uint16_t oldState = X ? parent->Xs : parent->Os;
     uint16_t newState = oldState | move;
-    if (newState == oldState) {
+
+    uint16_t newXs = X ? newState: parent->Xs;
+    uint16_t newOs = !X ? newState: parent->Os;
+
+    uint32_t board_state = calculate_hash(newXs, newOs);
+
+    if (pSeen->count(board_state))
         return nullptr;
-    }
 
-    uint32_t hash;
-
-    if (pSeenXs->count(newState) > 0 && pSeenOs->count(newState) > 0)
-        return nullptr;
-
-    printf("%i\n", newState);
     Node* pNewNode = static_cast<Node*>(malloc(sizeof(Node)));
     pNewNode->children = new std::vector<Node*>();
+    pNewNode->parent = parent;
 
+    pNewNode->Xs = newXs;
+    pNewNode->Os = newOs;
 
-    if (X) {
-        pNewNode->Xs = newState;
-        pNewNode->Os = parent->Os;
-        pSeenXs->insert(newState);
-    }
-    else {
-        pNewNode->Xs = parent->Xs;
-        pNewNode->Os = newState;
-        pSeenOs->insert(newState);
-    }
+    pSeen->insert({board_state, pNewNode});
     return pNewNode;
 }
+int test_traversal(Node* node, int ctr) {
+    for (Node* child : *node->children) {
+        pSeen->find(calculate_hash(child->Xs, child->Os))->second;
+        ctr += test_traversal(child, ctr);
+    }
+    return ctr + 1;
+}
+int minimax(Node* node, bool maxing) {
+    int winner = get_winner(node);
+    if (winner != 0) {
+        node->value = winner;
+    }
+    uint32_t board_state = calculate_hash(node->Xs, node->Os);
+
+    if (node->children->empty()) {
+        node->value = minimax(pSeen->find(board_state)->second, maxing);
+    }
+    int minimax_val = 0;
+    for (Node* child : *node->children) {
+        int val = minimax(child, !maxing);
+        if (maxing)
+            minimax_val = std::max(minimax_val, val);
+        else
+            minimax_val = std::min(minimax_val, val);
+    }
+    node->value = minimax_val;
+    return minimax_val;
+}
 void build_tree(Node* pParentNode) {
-    if (is_over(pParentNode->Xs) || is_over(pParentNode->Os)) return;
-    nodes += 1;
+    if (get_winner(pParentNode) != 0) return;
     // All possible X moves
     for (uint16_t move : moves) {
         Node* pNewState = make_move(pParentNode, move, true);
@@ -116,10 +148,12 @@ int main() {
     pRoot->Os = 0;
     pRoot->Xs = 0;
 
-    pSeenXs = new std::unordered_set<uint16_t>();
-    pSeenOs = new std::unordered_set<uint16_t>();
-
+    pSeen = new std::unordered_map<uint32_t, Node*>();
+    //pSeen->reserve(22012);
     build_tree(pRoot);
+    //printf("Nodes: %i\n", nodes);
+
+    minimax(pRoot, true);
 
     free(pRoot);
 }
